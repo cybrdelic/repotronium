@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
+import { useSession, signIn } from 'next-auth/react';
 import RepoCard from './RepoCard';
-import { FaSearch } from 'react-icons/fa';
+import { FaSearch, FaExclamationTriangle, FaSync, FaGithub } from 'react-icons/fa';
 
 type Repository = {
   id: number;
@@ -17,25 +18,45 @@ type Repository = {
 };
 
 export default function RepoList() {
+  const { data: session, status } = useSession();
   const [repos, setRepos] = useState<Repository[]>([]);
   const [filteredRepos, setFilteredRepos] = useState<Repository[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     async function fetchRepos() {
+      if (status === 'loading') return;
+
+      // If not authenticated, show appropriate message but don't try to fetch
+      if (status === 'unauthenticated') {
+        setError('You need to be signed in to view repositories');
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      setError('');
+
       try {
+        // Direct fetch instead of using apiClient for debugging
         const response = await fetch('/api/repositories');
 
         if (!response.ok) {
-          throw new Error('Failed to fetch repositories');
+          if (response.status === 401) {
+            throw new Error('Not authenticated. Please sign in again.');
+          } else {
+            throw new Error(`Request failed with status ${response.status}`);
+          }
         }
 
         const data = await response.json();
         setRepos(data);
         setFilteredRepos(data);
       } catch (err: any) {
+        console.error('Error fetching repositories:', err);
         setError(err.message || 'An error occurred while fetching repositories');
       } finally {
         setLoading(false);
@@ -43,7 +64,7 @@ export default function RepoList() {
     }
 
     fetchRepos();
-  }, []);
+  }, [session, status, retryCount]);
 
   useEffect(() => {
     if (searchQuery.trim() === '') {
@@ -61,7 +82,16 @@ export default function RepoList() {
     setFilteredRepos(filtered);
   }, [searchQuery, repos]);
 
-  if (loading) {
+  // Add retry button for better user experience
+  const handleRetry = () => {
+    setRetryCount(prev => prev + 1);
+  };
+
+  const handleSignIn = () => {
+    signIn('github', { callbackUrl: '/dashboard' });
+  };
+
+  if (status === 'loading') {
     return (
       <div className="flex justify-center items-center py-20">
         <div className="loader"></div>
@@ -69,10 +99,49 @@ export default function RepoList() {
     );
   }
 
+  if (status === 'unauthenticated') {
+    return (
+      <div className="bg-yellow-900/30 border border-yellow-800 rounded-lg p-6 text-center">
+        <FaExclamationTriangle className="text-yellow-500 text-3xl mx-auto mb-4" />
+        <p className="text-yellow-300 mb-3">You need to be signed in to view repositories</p>
+        <button
+          onClick={handleSignIn}
+          className="bg-yellow-800 hover:bg-yellow-700 text-white py-2 px-6 rounded-md inline-flex items-center gap-2"
+        >
+          <FaGithub /> Sign In with GitHub
+        </button>
+      </div>
+    );
+  }
+
   if (error) {
     return (
-      <div className="bg-red-900/30 border border-red-800 rounded-lg p-4 text-center">
-        <p className="text-red-200">{error}</p>
+      <div className="bg-red-900/30 border border-red-800 rounded-lg p-6 text-center">
+        <FaExclamationTriangle className="text-red-500 text-3xl mx-auto mb-4" />
+        <p className="text-red-300 mb-3">{error}</p>
+        {error.includes('Not authenticated') ? (
+          <button
+            onClick={handleSignIn}
+            className="bg-red-800 hover:bg-red-700 text-white py-2 px-6 rounded-md inline-flex items-center gap-2"
+          >
+            <FaGithub /> Sign In Again
+          </button>
+        ) : (
+          <button
+            onClick={handleRetry}
+            className="bg-red-800 hover:bg-red-700 text-white py-2 px-6 rounded-md inline-flex items-center gap-2"
+          >
+            <FaSync className="mr-2" /> Retry
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex justify-center items-center py-20">
+        <div className="loader"></div>
       </div>
     );
   }
